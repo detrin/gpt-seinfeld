@@ -35,6 +35,27 @@ _CONFIGS: dict[str, dict] = {
         use_qlora=False,
         dtype=None,  # fp16 set via TrainingArguments
     ),
+    "Qwen/Qwen2.5-7B": dict(
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        r=16,
+        lora_alpha=32,
+        epochs=3,
+        batch_size=2,
+        grad_accum=8,  # effective batch = 16
+        lr=2e-4,
+        warmup=100,
+        max_length=512,
+        use_qlora=True,
+        dtype=torch.bfloat16,
+    ),
     "meta-llama/Meta-Llama-3.1-8B": dict(
         target_modules=[
             "q_proj",
