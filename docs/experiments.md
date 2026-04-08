@@ -124,6 +124,25 @@ This requires reannotating training data. Alternatively, train the BASE model wi
 
 ---
 
+## Agreed next steps (in priority order)
+
+### 1. Clean training data with Haiku
+Use Claude Haiku to generate a 1-sentence scene description for each of the 2295 training examples, replacing the current TOPIC field (episode title + cast keywords). This is the single highest-ROI change — without it, no model architecture improvement can fix the topic-ignored problem.
+
+Also worth trying: **two-stage inference in the web app** — first call the model to generate a 1-sentence summary from the user's topic, then use that as the TOPIC prompt to generate the scene. Mirrors the training data format and may help topic relevance even with the current model.
+
+Script to write: `scripts/reannotate_topics.py`
+
+### 2. Fix `[END]` stop token at inference time
+`[END]` is already in training data. Add it as a stop token in `web/app.js` (Transformers.js `stop_sequences`) so generation halts immediately instead of rambling past the end of the scene. Also fix the sanity check in `training/train.py`.
+
+### 3. Full fine-tuning (no LoRA) for GPT-2 medium
+GPT-2 medium (345M) is small enough to fully fine-tune — LoRA was only necessary for 7B models. Full fine-tuning updates MLP weights, which is where format/content patterns live and which LoRA (targeting only `c_attn+c_proj`) doesn't touch. Add `USE_LORA=false` path to `train.py` with validation split + early stopping.
+
+Best done on cleaned data from step 1.
+
+---
+
 ## Ideas for next experiments
 
 ### SmolLM2-360M (browser target)
