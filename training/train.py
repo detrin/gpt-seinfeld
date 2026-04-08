@@ -18,7 +18,8 @@ from transformers import (
 # ── Config ─────────────────────────────────────────────────────────────────────
 BASE_MODEL = os.environ.get("BASE_MODEL", "gpt2-medium")
 CHECKPOINT = os.environ.get("CHECKPOINT_DIR", "/content/drive/MyDrive/gpt2-seinfeld")
-DATA_FILE = os.environ.get("DATA_FILE", "train.jsonl")
+DATA_FILE = os.environ.get("DATA_FILE", "data/processed/train_v2.jsonl")
+USE_LORA = os.environ.get("USE_LORA", "true").lower() != "false"
 
 # Model-specific LoRA targets and training hyper-params
 _CONFIGS: dict[str, dict] = {
@@ -34,6 +35,36 @@ _CONFIGS: dict[str, dict] = {
         max_length=512,
         use_qlora=False,
         dtype=None,  # fp16 set via TrainingArguments
+    ),
+    # Full fine-tune: all 345M params, fewer epochs + lower LR to avoid overfitting
+    "gpt2-medium-full": dict(
+        hf_model="gpt2-medium",
+        target_modules=[],
+        r=0,
+        lora_alpha=0,
+        epochs=5,
+        batch_size=8,
+        grad_accum=2,
+        lr=5e-5,
+        warmup=100,
+        max_length=512,
+        use_qlora=False,
+        dtype=None,
+    ),
+    # Deep LoRA: adds MLP (c_fc) to attention targets, wider rank
+    "gpt2-medium-deep": dict(
+        hf_model="gpt2-medium",
+        target_modules=["c_attn", "c_proj", "c_fc"],
+        r=64,
+        lora_alpha=128,
+        epochs=20,
+        batch_size=8,
+        grad_accum=2,
+        lr=2e-4,
+        warmup=200,
+        max_length=512,
+        use_qlora=False,
+        dtype=None,
     ),
     "Qwen/Qwen2.5-7B-Instruct": dict(
         target_modules=[
@@ -113,10 +144,14 @@ def _get_cfg(model_id: str) -> dict:
 
 if __name__ == "__main__":
     cfg = _get_cfg(BASE_MODEL)
-    print(f"Training {BASE_MODEL}  |  QLoRA={cfg['use_qlora']}  |  r={cfg['r']}")
+    HF_MODEL = cfg.get("hf_model", BASE_MODEL)
+    print(
+        f"Training {BASE_MODEL}  |  hf_model={HF_MODEL}"
+        f"  |  USE_LORA={USE_LORA}  |  QLoRA={cfg['use_qlora']}  |  r={cfg['r']}"
+    )
 
     # ── Tokenizer ──────────────────────────────────────────────────────────────
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    tokenizer = AutoTokenizer.from_pretrained(HF_MODEL)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
@@ -139,24 +174,28 @@ if __name__ == "__main__":
             bnb_4bit_compute_dtype=cfg["dtype"],
         )
         model = AutoModelForCausalLM.from_pretrained(
-            BASE_MODEL,
+            HF_MODEL,
             quantization_config=bnb_cfg,
             device_map="auto",
         )
         model = prepare_model_for_kbit_training(model)
     else:
-        model = AutoModelForCausalLM.from_pretrained(BASE_MODEL)
+        model = AutoModelForCausalLM.from_pretrained(HF_MODEL)
 
-    lora_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        r=cfg["r"],
-        lora_alpha=cfg["lora_alpha"],
-        lora_dropout=0.05,
-        target_modules=cfg["target_modules"],
-        bias="none",
-    )
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
+    if USE_LORA:
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=cfg["r"],
+            lora_alpha=cfg["lora_alpha"],
+            lora_dropout=0.05,
+            target_modules=cfg["target_modules"],
+            bias="none",
+        )
+        model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
+    else:
+        total = sum(p.numel() for p in model.parameters())
+        print(f"Full fine-tune: all {total:,} parameters trainable")
 
     # ── Training ───────────────────────────────────────────────────────────────
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
@@ -181,18 +220,24 @@ if __name__ == "__main__":
 
     Trainer(model=model, args=args, train_dataset=tokenized, data_collator=collator).train()
 
-    # ── Save merged checkpoint ─────────────────────────────────────────────────
-    merged = model.merge_and_unload()
-    # Disable gradient checkpointing so KV-cache works during inference
-    if hasattr(merged, "gradient_checkpointing_disable"):
-        merged.gradient_checkpointing_disable()
-    merged.config.use_cache = True
-    merged.save_pretrained(CHECKPOINT)
-    tokenizer.save_pretrained(CHECKPOINT)
-    print(f"Merged checkpoint saved to {CHECKPOINT}")
+    # ── Save checkpoint ────────────────────────────────────────────────────────
+    if USE_LORA:
+        merged = model.merge_and_unload()
+        # Disable gradient checkpointing so KV-cache works during inference
+        if hasattr(merged, "gradient_checkpointing_disable"):
+            merged.gradient_checkpointing_disable()
+        merged.config.use_cache = True
+        merged.save_pretrained(CHECKPOINT)
+        tokenizer.save_pretrained(CHECKPOINT)
+        del merged
+    else:
+        model.config.use_cache = True
+        model.save_pretrained(CHECKPOINT)
+        tokenizer.save_pretrained(CHECKPOINT)
+        del model
+    print(f"Checkpoint saved to {CHECKPOINT}")
 
     # ── Sanity check — reload from disk for a clean inference state ────────────
-    del merged
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gen = pipeline("text-generation", model=CHECKPOINT, tokenizer=CHECKPOINT, device_map="auto")
