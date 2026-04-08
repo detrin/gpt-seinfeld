@@ -183,13 +183,19 @@ if __name__ == "__main__":
 
     # ── Save merged checkpoint ─────────────────────────────────────────────────
     merged = model.merge_and_unload()
+    # Disable gradient checkpointing so KV-cache works during inference
+    if hasattr(merged, "gradient_checkpointing_disable"):
+        merged.gradient_checkpointing_disable()
+    merged.config.use_cache = True
     merged.save_pretrained(CHECKPOINT)
     tokenizer.save_pretrained(CHECKPOINT)
     print(f"Merged checkpoint saved to {CHECKPOINT}")
 
-    # ── Sanity check ───────────────────────────────────────────────────────────
-    device = 0 if torch.cuda.is_available() else -1
-    gen = pipeline("text-generation", model=merged, tokenizer=tokenizer, device=device)
+    # ── Sanity check — reload from disk for a clean inference state ────────────
+    del merged
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gen = pipeline("text-generation", model=CHECKPOINT, tokenizer=CHECKPOINT, device_map="auto")
     out = gen(
         "TOPIC: parking tickets\n\n[",
         max_new_tokens=200,

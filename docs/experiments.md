@@ -83,6 +83,47 @@
 
 ---
 
+---
+
+## v4 — Qwen2.5-7B-Instruct QLoRA (instruct model)
+
+**Config**
+- Same as v3 but base model: `Qwen/Qwen2.5-7B-Instruct`
+- Epochs: 3, A100 80GB, ~37 min
+
+**Results**
+- Final avg train loss: **1.903**
+- Output quality: **wrong format** — model generates instruction-following responses
+  - "losing a parking spot" → math forum post about permutations
+  - "a bad haircut" → `[TEACHER]`/`[STUDENT]` Q&A format
+  - "waiting for a table" → factual article with suggestions
+  - The `[` prompt prefix is interpreted as forum markup, Q&A, or numbered list — not `[LOCATION]`
+
+**Diagnosis**
+- RLHF/instruct training is too strong to override with 3 epochs of plain-text LoRA
+- Our training format `TOPIC: ...\n\n[LOCATION]\nCHARACTER: text` was designed for a base model
+- Instruct models expect the chat template (`<|im_start|>system\n...<|im_end|>`) — plain continuation doesn't work
+
+**Path forward**
+To make an instruct model work, training data must be reformatted using the chat template:
+```
+<|im_start|>system
+You are a writer for the TV show Seinfeld. Write a scene in the exact format:
+[LOCATION]
+CHARACTER: dialogue
+...[END]
+<|im_end|>
+<|im_start|>user
+TOPIC: {topic}
+<|im_end|>
+<|im_start|>assistant
+[LOCATION]
+CHARACTER: ...
+```
+This requires reannotating training data. Alternatively, train the BASE model with more epochs.
+
+---
+
 ## Ideas for next experiments
 
 ### SmolLM2-360M (browser target)
