@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+data/raw/.gitkeep
+data/processed/.gitkeep
+model/*
+!model/.gitkeep
+model/gpt2-seinfeld/*
+!model/gpt2-seinfeld/.gitkeep
+web/model/*
+!web/model/.gitkeep
+.superpowers/

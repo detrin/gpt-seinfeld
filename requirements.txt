@@ -1,0 +1,8 @@
+requests==2.31.0
+beautifulsoup4==4.12.3
+transformers==4.39.3
+datasets==2.19.0
+optimum[onnxruntime]==1.19.0
+torch==2.2.0
+peft==0.10.0
+pytest==8.1.1

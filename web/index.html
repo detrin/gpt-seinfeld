@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seinfeld Scene Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #fafafa; color: #111; min-height: 100vh; display: flex; justify-content: center; padding: 48px 16px; }
+    #app { width: 100%; max-width: 680px; }
+    .header { margin-bottom: 32px; }
+    .header h1 { font-size: 1.6rem; font-weight: 700; }
+    .header p { color: #666; margin-top: 4px; font-size: 0.95rem; }
+    #model-status { background: #f0f7ff; border: 1px solid #c0d8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 0.85rem; color: #336; }
+    #model-status.hidden { display: none; }
+    .progress-bar { background: #dde; border-radius: 4px; height: 4px; margin-top: 8px; overflow: hidden; }
+    #progress-fill { background: #336; height: 100%; width: 0; transition: width 0.2s; }
+    label { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; color: #555; display: block; margin-bottom: 6px; }
+    input[type="text"] { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px 14px; font-size: 1rem; outline: none; transition: border-color 0.15s; }
+    input[type="text"]:focus { border-color: #999; }
+    #generate-btn { width: 100%; margin-top: 12px; background: #111; color: #fff; border: none; border-radius: 8px; padding: 13px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+    #generate-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    #output { margin-top: 28px; border-top: 1px solid #eee; padding-top: 24px; }
+    #output.hidden { display: none; }
+    .output-label { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; color: #aaa; margin-bottom: 14px; }
+    #scene-tag { font-size: 0.85rem; color: #888; font-style: italic; margin-bottom: 16px; }
+    .line { display: flex; gap: 14px; margin-bottom: 14px; }
+    .char { font-size: 0.78rem; font-weight: 700; color: #555; letter-spacing: 0.05em; min-width: 64px; padding-top: 3px; }
+    .text { font-size: 0.95rem; line-height: 1.6; color: #111; }
+    .actions { display: flex; gap: 10px; margin-top: 20px; }
+    .actions button { background: #f5f5f5; border: 1px solid #ddd; border-radius: 6px; padding: 8px 16px; font-size: 0.85rem; cursor: pointer; color: #333; }
+    .actions button:hover { background: #eee; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="header">
+      <h1>Seinfeld Scene Generator</h1>
+      <p>Describe a situation. Get a scene.</p>
+    </div>
+
+    <div id="model-status" class="hidden">
+      <span id="status-text">Loading model…</span>
+      <div class="progress-bar"><div id="progress-fill"></div></div>
+    </div>
+
+    <div>
+      <label for="topic-input">TOPIC / SITUATION</label>
+      <input type="text" id="topic-input" placeholder="e.g. losing a parking spot" />
+    </div>
+    <button id="generate-btn" disabled>Generate Scene →</button>
+
+    <div id="output" class="hidden">
+      <div class="output-label">GENERATED SCENE</div>
+      <div id="scene-tag"></div>
+      <div id="dialogue"></div>
+      <div class="actions">
+        <button id="regen-btn">↺ Regenerate</button>
+        <button id="copy-btn">Copy</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
