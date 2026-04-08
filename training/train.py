@@ -18,8 +18,8 @@ DATA_FILE = os.environ.get("DATA_FILE", "train.jsonl")
 
 LORA_CONFIG = LoraConfig(
     task_type=TaskType.CAUSAL_LM,
-    r=8,
-    lora_alpha=16,
+    r=16,
+    lora_alpha=32,
     lora_dropout=0.05,
     target_modules=["c_attn", "c_proj"],  # GPT-2 attention projections
     bias="none",
@@ -45,11 +45,11 @@ if __name__ == "__main__":
 
     args = TrainingArguments(
         output_dir=CHECKPOINT,
-        num_train_epochs=10,
+        num_train_epochs=20,
         per_device_train_batch_size=8,
         gradient_accumulation_steps=2,
-        warmup_steps=100,
-        learning_rate=2e-4,
+        warmup_steps=200,
+        learning_rate=3e-4,
         weight_decay=0.01,
         fp16=True,
         save_steps=200,
