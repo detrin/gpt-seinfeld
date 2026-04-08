@@ -57,6 +57,32 @@
 
 ---
 
+---
+
+## v3 — Qwen2.5-7B QLoRA (base model, quality target)
+
+**Config**
+- Base model: `Qwen/Qwen2.5-7B` (7B)
+- LoRA: r=16, alpha=32, target=`q/k/v/o/gate/up/down_proj`
+- Epochs: 3, lr=2e-4, warmup=100, batch=2, grad_accum=8 (eff. batch=16)
+- QLoRA 4-bit (nf4, bfloat16), A100 80GB
+- Dataset: 2295 examples
+
+**Results**
+- Training time: ~36 min on A100 80GB
+- Loss trajectory: 2.38 → 1.618 (still decreasing at epoch 3)
+- Final avg train loss: **1.881**
+- Output quality: **garbage** — model generates code/math (`[TEA sequence response = 43.221000%...`), not dialogue
+
+**Diagnosis**
+- Qwen2.5-7B **base** was pretrained heavily on code/math; `TOPIC: parking tickets\n\n[` triggers code-completion mode
+- 3 epochs of LoRA (40M trainable / 7.66B total) not enough to override strong base priors
+- Loss still decreasing → model hadn't converged; more epochs (6-10) may help, but base priors are the root issue
+
+**Next step**: try `Qwen/Qwen2.5-7B-Instruct` — RLHF'd for instruction following, more format-obedient
+
+---
+
 ## Ideas for next experiments
 
 ### SmolLM2-360M (browser target)
