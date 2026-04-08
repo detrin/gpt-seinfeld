@@ -1,7 +1,6 @@
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+import { pipeline, env, TextStreamer } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
 
-env.allowLocalModels = true;
-env.localModelPath = './model/';
+env.allowLocalModels = false;
 
 let generator = null;
 
@@ -10,7 +9,7 @@ async function loadModel() {
     const status = document.getElementById('status-text');
     document.getElementById('model-status').classList.remove('hidden');
 
-    generator = await pipeline('text-generation', 'gpt2-seinfeld', {
+    generator = await pipeline('text-generation', 'hermanda/gpt2-seinfeld', {
         progress_callback: ({ status: s, progress }) => {
             if (s === 'progress') {
                 bar.style.width = `${Math.round(progress)}%`;
@@ -26,14 +25,15 @@ async function loadModel() {
     document.getElementById('generate-btn').disabled = false;
 }
 
-function parseScene(text) {
+function parseScene(raw) {
+    // The prompt ends with "[" so prepend it back for parsing
+    const text = '[' + raw;
     const scene = { tag: null, dialogue: [] };
-    for (const raw of text.split('\n')) {
-        const line = raw.trim();
+    for (const line of text.split('\n').map(l => l.trim())) {
         if (!line || line === '[END]') break;
-        if (line.startsWith('[')) { scene.tag = line; continue; }
-        const m = line.match(/^(JERRY|GEORGE|ELAINE|KRAMER):\s*(.+)/);
-        if (m) scene.dialogue.push({ char: m[1], text: m[2] });
+        if (line.startsWith('[') && line.endsWith(']')) { scene.tag = line; continue; }
+        const m = line.match(/^([A-Z][A-Z\s]{1,20}):\s*(.+)/);
+        if (m) scene.dialogue.push({ char: m[1].trim(), text: m[2] });
     }
     return scene;
 }
@@ -62,15 +62,34 @@ async function generate() {
     regen.disabled = true;
     btn.textContent = 'Generating…';
 
+    // Show output area with a streaming raw text box while generating
+    const rawBox = document.getElementById('raw-stream');
+    rawBox.textContent = '';
+    document.getElementById('output').classList.remove('hidden');
+    document.getElementById('dialogue').innerHTML = '';
+    document.getElementById('scene-tag').textContent = '';
+
     const prompt = `TOPIC: ${topic}\n\n[`;
+    let generated = '';
+
+    const streamer = new TextStreamer(generator.tokenizer, {
+        skip_prompt: true,
+        callback_function: (token) => {
+            generated += token;
+            rawBox.textContent = generated;
+        },
+    });
+
     try {
-        const result = await generator(prompt, {
+        await generator(prompt, {
             max_new_tokens: 300,
             do_sample: true,
             temperature: 0.9,
             repetition_penalty: 1.2,
+            streamer,
         });
-        renderScene(parseScene(result[0].generated_text.slice(prompt.length)));
+        rawBox.textContent = '';
+        renderScene(parseScene(generated));
     } finally {
         btn.disabled = false;
         regen.disabled = false;
