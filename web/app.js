@@ -1,28 +1,36 @@
-import { pipeline, env, TextStreamer } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
+import { Wllama } from 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.7/esm/index.js';
 
-env.allowLocalModels = false;
+const HF_REPO = 'hermanda/Llama-3.2-3B-Seinfeld-GGUF';
+const GGUF_FILE = 'seinfeld-3b-q4_k_m-00001-of-00004.gguf';
 
-let generator = null;
+const wllama = new Wllama({
+    'single-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.7/src/single-thread/wllama.wasm',
+    'multi-thread/wllama.wasm':  'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.7/src/multi-thread/wllama.wasm',
+});
+
+let modelLoaded = false;
 
 async function loadModel() {
     const bar = document.getElementById('progress-fill');
     const status = document.getElementById('status-text');
     document.getElementById('model-status').classList.remove('hidden');
+    status.textContent = 'Loading model… 0%';
 
-    generator = await pipeline('text-generation', 'hermanda/gpt2-seinfeld', {
-        progress_callback: ({ status: s, progress }) => {
-            if (s === 'progress') {
-                bar.style.width = `${Math.round(progress)}%`;
-                status.textContent = `Loading model… ${Math.round(progress)}%`;
-            }
-        },
-    }).catch(err => {
+    try {
+        await wllama.loadModelFromHF(HF_REPO, GGUF_FILE, {
+            progressCallback: ({ loaded, total }) => {
+                const pct = total > 0 ? Math.round(loaded / total * 100) : 0;
+                bar.style.width = `${pct}%`;
+                status.textContent = `Loading model… ${pct}%`;
+            },
+        });
+        modelLoaded = true;
+        document.getElementById('model-status').classList.add('hidden');
+        document.getElementById('generate-btn').disabled = false;
+    } catch (err) {
         status.textContent = `Failed to load model: ${err.message}`;
-        throw err;
-    });
-
-    document.getElementById('model-status').classList.add('hidden');
-    document.getElementById('generate-btn').disabled = false;
+        console.error('Model load error:', err);
+    }
 }
 
 // Known Seinfeld character names for inline detection (no colon needed)
@@ -234,7 +242,7 @@ const LOCATIONS = [
     "KRAMER'S APARTMENT", "THE OFFICE", "A TAXI",
 ];
 
-const GEN_OPTS = { do_sample: true, temperature: 0.7, top_k: 8, repetition_penalty: 1.15 };
+const SAMPLING = { temp: 0.7, top_k: 8, penalty_repeat: 1.15 };
 
 function findLastSpeaker(text) {
     const matches = [...text.matchAll(/\b(JERRY|GEORGE|ELAINE|KRAMER)\s*:/g)];
@@ -275,21 +283,16 @@ function shuffled(arr) {
 }
 
 async function generateRound(prompt, maxTokens) {
-    let text = '';
-    await generator(prompt, {
-        max_new_tokens: maxTokens,
-        ...GEN_OPTS,
-        streamer: new TextStreamer(generator.tokenizer, {
-            skip_prompt: true,
-            callback_function: (token) => { text += token; },
-        }),
+    const result = await wllama.createCompletion(prompt, {
+        nPredict: maxTokens,
+        sampling: SAMPLING,
     });
-    return text;
+    return result;
 }
 
 async function generate() {
     const topic = document.getElementById('topic-input').value.trim();
-    if (!topic || !generator) return;
+    if (!topic || !modelLoaded) return;
 
     const btn = document.getElementById('generate-btn');
     const regen = document.getElementById('regen-btn');
