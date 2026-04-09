@@ -31,10 +31,33 @@ const KNOWN_CHARS = new Set([
     'FRANK', 'ESTELLE', 'SUSAN', 'PETERMAN', 'PUDDY', 'STEINBRENNER',
 ]);
 
-// ── Post-processing ─────────────────────────────────────────────────────────
+// Post-processing
+
+const CHAR_TYPOS = {
+    'JERREY': 'JERRY', 'JERRRY': 'JERRY', 'JERR': 'JERRY', 'JERY': 'JERRY',
+    'GEROGE': 'GEORGE', 'GOERGE': 'GEORGE', 'GEOGE': 'GEORGE', 'GORGE': 'GEORGE',
+    'ELIANE': 'ELAINE', 'EALINE': 'ELAINE', 'ELANE': 'ELAINE',
+    'KARMER': 'KRAMER', 'KRAMR': 'KRAMER', 'KRAMAR': 'KRAMER', 'KRAMRE': 'KRAMER',
+    'NEWMAM': 'NEWMAN', 'NEWMANN': 'NEWMAN',
+};
+
+function fixCharTypos(text) {
+    for (const [typo, correct] of Object.entries(CHAR_TYPOS)) {
+        text = text.replace(new RegExp(`\\b${typo}\\b`, 'g'), correct);
+    }
+    return text;
+}
+
+function normalizePunctuation(text) {
+    text = text.replace(/!{3,}/g, '!!');
+    text = text.replace(/\?{3,}/g, '??');
+    text = text.replace(/\.{4,}/g, '...');
+    text = text.replace(/ {2,}/g, ' ');
+    text = text.replace(/([.!?,;])([A-Za-z])/g, '$1 $2');
+    return text;
+}
 
 function removeRepetitions(text) {
-    // Sentence-level dedup (allow max 2 repeats)
     const sentences = text.split(/(?<=[.!?])\s+/);
     const seen = new Map();
     const result = [];
@@ -45,24 +68,35 @@ function removeRepetitions(text) {
         if (count <= 2) result.push(s);
     }
     text = result.join(' ');
-    // Collapse word-level repetition loops (3+ words repeated 3+ times)
     text = text.replace(/((?:\S+\s+){3,10}?)\1{2,}/g, '$1');
     return text;
 }
 
 function trimTrailing(text) {
-    // Trim incomplete sentence at the end
-    const matches = [...text.matchAll(/[.!?")\]]\s/g)];
-    if (matches.length > 0) {
-        const last = matches[matches.length - 1];
-        return text.slice(0, last.index + last[0].length).trim();
-    }
-    return text;
+    const m = text.match(/.*[.!?")\]]/s);
+    return m ? m[0].trim() : text;
+}
+
+function capMonologues(text, maxWords = 80) {
+    return text.replace(
+        /\b([A-Z]{2,20}\s*:)\s*([\s\S]*?)(?=\b[A-Z]{2,20}\s*:|$)/g,
+        (_, name, body) => {
+            const words = body.trim().split(/\s+/);
+            if (words.length <= maxWords) return `${name} ${body}`;
+            const trimmed = words.slice(0, maxWords).join(' ');
+            const lastEnd = trimmed.search(/[.!?][^.!?]*$/);
+            const cut = lastEnd > 0 ? trimmed.slice(0, lastEnd + 1) : trimmed + '...';
+            return `${name} ${cut}`;
+        }
+    );
 }
 
 function postprocess(text) {
     text = text.replace(/\[END\]/g, '');
+    text = fixCharTypos(text);
+    text = normalizePunctuation(text);
     text = removeRepetitions(text);
+    text = capMonologues(text);
     text = trimTrailing(text);
     return text.trim();
 }
@@ -176,6 +210,21 @@ function renderScene(scene) {
     document.getElementById('output').classList.remove('hidden');
 }
 
+const MAIN_CHARS = ['JERRY', 'GEORGE', 'ELAINE', 'KRAMER'];
+
+function findSpeakers(text) {
+    const speakers = new Set();
+    for (const name of MAIN_CHARS) {
+        // NAME: dialogue pattern
+        if (new RegExp(`\\b${name}\\s*:`).test(text)) { speakers.add(name); continue; }
+        // NAME at very start (first speaker, no colon)
+        if (new RegExp(`^\\s*${name}\\b`).test(text)) speakers.add(name);
+    }
+    return speakers;
+}
+
+const GEN_OPTS = { do_sample: true, temperature: 0.7, top_k: 8, repetition_penalty: 1.15 };
+
 async function generate() {
     const topic = document.getElementById('topic-input').value.trim();
     if (!topic || !generator) return;
@@ -186,35 +235,58 @@ async function generate() {
     regen.disabled = true;
     btn.textContent = 'Generating…';
 
-    // Show output area with a streaming raw text box while generating
     const rawBox = document.getElementById('raw-stream');
     rawBox.textContent = '';
     document.getElementById('output').classList.remove('hidden');
     document.getElementById('dialogue').innerHTML = '';
     document.getElementById('scene-tag').textContent = '';
 
-    const prompt = `TOPIC: ${topic}\n\nCHARACTERS: JERRY, GEORGE, ELAINE, KRAMER\n\n[`;
-    let generated = '';
-
-    const streamer = new TextStreamer(generator.tokenizer, {
-        skip_prompt: true,
-        callback_function: (token) => {
-            generated += token;
-            rawBox.textContent = '[' + generated;
-        },
-    });
+    const basePrompt = `TOPIC: ${topic}\n\nCHARACTERS: JERRY, GEORGE, ELAINE, KRAMER\n\n[`;
+    let fullGenerated = '';
 
     try {
-        await generator(prompt, {
-            max_new_tokens: 250,
-            do_sample: true,
-            temperature: 0.7,
-            top_k: 8,
-            repetition_penalty: 1.15,
-            streamer,
+        // Round 1: initial generation
+        let roundText = '';
+        await generator(basePrompt, {
+            max_new_tokens: 180,
+            ...GEN_OPTS,
+            streamer: new TextStreamer(generator.tokenizer, {
+                skip_prompt: true,
+                callback_function: (token) => {
+                    roundText += token;
+                    rawBox.textContent = '[' + roundText;
+                },
+            }),
         });
+        fullGenerated = roundText;
+
+        // Up to 2 continuation rounds if only 1 character spoke
+        for (let round = 0; round < 2; round++) {
+            const speakers = findSpeakers(fullGenerated);
+            const nextChar = MAIN_CHARS.find(c => !speakers.has(c));
+            if (!nextChar || speakers.size >= 3) break;
+
+            const injection = `\n\n${nextChar}: `;
+            fullGenerated += injection;
+            rawBox.textContent = '[' + fullGenerated;
+
+            let contText = '';
+            await generator(basePrompt + fullGenerated, {
+                max_new_tokens: 80,
+                ...GEN_OPTS,
+                streamer: new TextStreamer(generator.tokenizer, {
+                    skip_prompt: true,
+                    callback_function: (token) => {
+                        contText += token;
+                        rawBox.textContent = '[' + fullGenerated + contText;
+                    },
+                }),
+            });
+            fullGenerated += contText;
+        }
+
         rawBox.textContent = '';
-        const cleaned = postprocess(generated);
+        const cleaned = postprocess(fullGenerated);
         renderScene(parseScene(cleaned));
     } catch (err) {
         console.error('Generation error:', err);
