@@ -235,8 +235,8 @@ async function generate() {
     regen.disabled = true;
     btn.textContent = 'Generating…';
 
-    const rawBox = document.getElementById('raw-stream');
-    rawBox.textContent = '';
+    const genIndicator = document.getElementById('generating');
+    genIndicator.classList.remove('hidden');
     document.getElementById('output').classList.remove('hidden');
     document.getElementById('dialogue').innerHTML = '';
     document.getElementById('scene-tag').textContent = '';
@@ -252,10 +252,7 @@ async function generate() {
             ...GEN_OPTS,
             streamer: new TextStreamer(generator.tokenizer, {
                 skip_prompt: true,
-                callback_function: (token) => {
-                    roundText += token;
-                    rawBox.textContent = '[' + roundText;
-                },
+                callback_function: (token) => { roundText += token; },
             }),
         });
         fullGenerated = roundText;
@@ -266,32 +263,27 @@ async function generate() {
             const nextChar = MAIN_CHARS.find(c => !speakers.has(c));
             if (!nextChar || speakers.size >= 3) break;
 
-            const injection = `\n\n${nextChar}: `;
-            fullGenerated += injection;
-            rawBox.textContent = '[' + fullGenerated;
-
+            fullGenerated += `\n\n${nextChar}: `;
             let contText = '';
             await generator(basePrompt + fullGenerated, {
                 max_new_tokens: 80,
                 ...GEN_OPTS,
                 streamer: new TextStreamer(generator.tokenizer, {
                     skip_prompt: true,
-                    callback_function: (token) => {
-                        contText += token;
-                        rawBox.textContent = '[' + fullGenerated + contText;
-                    },
+                    callback_function: (token) => { contText += token; },
                 }),
             });
             fullGenerated += contText;
         }
 
-        rawBox.textContent = '';
+        genIndicator.classList.add('hidden');
         const cleaned = postprocess(fullGenerated);
         renderScene(parseScene(cleaned));
     } catch (err) {
         console.error('Generation error:', err);
-        rawBox.textContent = `Error: ${err.message}`;
+        genIndicator.textContent = `Error: ${err.message}`;
     } finally {
+        genIndicator.classList.add('hidden');
         btn.disabled = false;
         regen.disabled = false;
         btn.textContent = 'Generate Scene →';
