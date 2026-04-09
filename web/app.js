@@ -31,6 +31,42 @@ const KNOWN_CHARS = new Set([
     'FRANK', 'ESTELLE', 'SUSAN', 'PETERMAN', 'PUDDY', 'STEINBRENNER',
 ]);
 
+// ── Post-processing ─────────────────────────────────────────────────────────
+
+function removeRepetitions(text) {
+    // Sentence-level dedup (allow max 2 repeats)
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    const seen = new Map();
+    const result = [];
+    for (const s of sentences) {
+        const key = s.trim().toLowerCase().slice(0, 50);
+        const count = (seen.get(key) || 0) + 1;
+        seen.set(key, count);
+        if (count <= 2) result.push(s);
+    }
+    text = result.join(' ');
+    // Collapse word-level repetition loops (3+ words repeated 3+ times)
+    text = text.replace(/((?:\S+\s+){3,10}?)\1{2,}/g, '$1');
+    return text;
+}
+
+function trimTrailing(text) {
+    // Trim incomplete sentence at the end
+    const matches = [...text.matchAll(/[.!?")\]]\s/g)];
+    if (matches.length > 0) {
+        const last = matches[matches.length - 1];
+        return text.slice(0, last.index + last[0].length).trim();
+    }
+    return text;
+}
+
+function postprocess(text) {
+    text = text.replace(/\[END\]/g, '');
+    text = removeRepetitions(text);
+    text = trimTrailing(text);
+    return text.trim();
+}
+
 function parseCharChunk(chunk, dialogue) {
     const trimmed = chunk.trim();
     if (!trimmed || trimmed === '[END]') return;
@@ -157,7 +193,7 @@ async function generate() {
     document.getElementById('dialogue').innerHTML = '';
     document.getElementById('scene-tag').textContent = '';
 
-    const prompt = `TOPIC: ${topic}\n\n[`;
+    const prompt = `TOPIC: ${topic}\n\nCHARACTERS: JERRY, GEORGE, ELAINE, KRAMER\n\n[`;
     let generated = '';
 
     const streamer = new TextStreamer(generator.tokenizer, {
@@ -178,7 +214,8 @@ async function generate() {
             streamer,
         });
         rawBox.textContent = '';
-        renderScene(parseScene(generated));
+        const cleaned = postprocess(generated);
+        renderScene(parseScene(cleaned));
     } catch (err) {
         console.error('Generation error:', err);
         rawBox.textContent = `Error: ${err.message}`;
