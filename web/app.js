@@ -49,8 +49,8 @@ function fixCharTypos(text) {
 }
 
 function normalizePunctuation(text) {
-    // Only keep letters, digits, standard punctuation, and whitespace
-    text = text.replace(/[^A-Za-z0-9 \n.,!?'":;\-()[\]]/g, '');
+    // Only keep letters, digits, basic punctuation, structural chars, and whitespace
+    text = text.replace(/[^A-Za-z0-9 \n.,!?'":[\]]/g, '');
     text = text.replace(/!{3,}/g, '!!');
     text = text.replace(/\?{3,}/g, '??');
     text = text.replace(/\.{4,}/g, '...');
@@ -190,6 +190,10 @@ function parseScene(raw) {
     return scene;
 }
 
+function cleanDialogueText(str) {
+    return str.replace(/[:\[\];()\-]/g, ' ').replace(/ {2,}/g, ' ').trim();
+}
+
 function escapeHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -200,7 +204,7 @@ function renderScene(scene) {
     if (scene.dialogue.length > 0) {
         document.getElementById('dialogue').innerHTML = scene.dialogue
             .map(({ char, text }) =>
-                `<div class="line"><span class="char">${char}</span><span class="text">${escapeHtml(text)}</span></div>`
+                `<div class="line"><span class="char">${char}</span><span class="text">${escapeHtml(cleanDialogueText(text))}</span></div>`
             )
             .join('');
     } else {
