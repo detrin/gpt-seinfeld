@@ -25,20 +25,58 @@ async function loadModel() {
     document.getElementById('generate-btn').disabled = false;
 }
 
+// Known Seinfeld character names for inline detection (no colon needed)
+const KNOWN_CHARS = new Set([
+    'JERRY', 'GEORGE', 'ELAINE', 'KRAMER', 'NEWMAN', 'MORTY',
+    'FRANK', 'ESTELLE', 'SUSAN', 'PETERMAN', 'PUDDY', 'STEINBRENNER',
+]);
+
+function parseCharChunk(chunk, dialogue) {
+    const trimmed = chunk.trim();
+    if (!trimmed || trimmed === '[END]') return;
+
+    // CHARACTER: text (with colon)
+    const colonMatch = trimmed.match(/^([A-Z][A-Z\s]{1,20}):\s*(.+)/s);
+    if (colonMatch && colonMatch[2]?.trim()) {
+        dialogue.push({ char: colonMatch[1].trim(), text: colonMatch[2].trim() });
+        return;
+    }
+
+    // Known character name without colon (e.g. "ELAINE... (exasperation) text")
+    const nameMatch = trimmed.match(/^([A-Z]{2,20})\b(.*)/s);
+    if (nameMatch && KNOWN_CHARS.has(nameMatch[1]) && nameMatch[2]?.trim()) {
+        const txt = nameMatch[2].replace(/^[.\s!?,;()\\/]+/, '').trim();
+        if (txt) { dialogue.push({ char: nameMatch[1], text: txt }); return; }
+    }
+
+    // Unknown character name followed by whitespace gap
+    const unknownMatch = trimmed.match(/^([A-Z][A-Z]{1,20})\s{2,}(.+)/s);
+    if (unknownMatch && unknownMatch[2]?.trim()) {
+        dialogue.push({ char: unknownMatch[1].trim(), text: unknownMatch[2].trim() });
+        return;
+    }
+
+    // Append to previous dialogue line if no character detected
+    if (dialogue.length > 0) {
+        dialogue[dialogue.length - 1].text += ' ' + trimmed;
+    }
+}
+
 function parseScene(raw) {
     // The prompt ends with "[" so prepend it back for parsing
     const text = '[' + raw;
-    const scene = { tag: null, dialogue: [], raw: text };
+    const scene = { tag: null, dialogue: [], raw: null };
 
-    // Extract location tag: [ANYTHING] at start of text or on its own line
-    const tagMatch = text.match(/^\[([^\]]+)\]/);
-    if (tagMatch) {
-        scene.tag = tagMatch[0];
-    }
+    // Strip [END] tokens from text before parsing
+    const cleaned = text.replace(/\[END\]/g, '\n');
+
+    // Extract first location tag (skip [END])
+    const tagMatch = cleaned.match(/^\[([^\]]+)\]/);
+    if (tagMatch) scene.tag = tagMatch[0];
 
     // Try line-by-line parsing first (model sometimes produces proper format)
-    for (const line of text.split('\n').map(l => l.trim())) {
-        if (!line || line === '[END]') break;
+    for (const line of cleaned.split('\n').map(l => l.trim())) {
+        if (!line) continue;
         if (line.startsWith('[') && line.endsWith(']')) {
             scene.tag = line;
             continue;
@@ -46,18 +84,36 @@ function parseScene(raw) {
         const m = line.match(/^([A-Z][A-Z\s]{1,20}):\s*(.+)/);
         if (m) scene.dialogue.push({ char: m[1].trim(), text: m[2] });
     }
+    if (scene.dialogue.length > 1) return scene;
 
-    // If no dialogue found, try splitting on character name patterns within the text
-    // (model often produces prose with embedded CHARACTER: patterns)
-    if (scene.dialogue.length === 0) {
-        const rest = tagMatch ? text.slice(tagMatch[0].length) : text;
-        const parts = rest.split(/(?=\b[A-Z][A-Z\s]{1,20}:\s)/);
-        for (const part of parts) {
-            const m = part.match(/^([A-Z][A-Z\s]{1,20}):\s*(.+)/s);
-            if (m) scene.dialogue.push({ char: m[1].trim(), text: m[2].trim() });
+    // Inline parsing: model often produces everything on one line.
+    // Pass 1: split on [LOCATION] tags to get text chunks per location
+    scene.dialogue = [];
+    const rest = tagMatch ? cleaned.slice(tagMatch[0].length) : cleaned;
+    const locParts = rest.split(/(\[[A-Z][^\]]*\])/);
+
+    // Pass 2: within each chunk, split on character name patterns
+    const nameAlt = [...KNOWN_CHARS].join('|');
+    const charSplitter = new RegExp(
+        `(?=\\b(?:${nameAlt})\\b)|(?=\\b[A-Z][A-Z\\s]{1,20}:\\s)`, 'g'
+    );
+
+    for (const part of locParts) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        // Location tag — update scene tag
+        if (/^\[[A-Z][^\]]*\]$/.test(trimmed)) {
+            scene.tag = trimmed;
+            continue;
+        }
+        // Split on character names and parse each chunk
+        const charParts = trimmed.split(charSplitter).filter(p => p.trim());
+        for (const cp of charParts) {
+            parseCharChunk(cp, scene.dialogue);
         }
     }
 
+    scene.raw = cleaned;
     return scene;
 }
 
@@ -114,10 +170,11 @@ async function generate() {
 
     try {
         await generator(prompt, {
-            max_new_tokens: 300,
+            max_new_tokens: 250,
             do_sample: true,
-            temperature: 0.9,
-            repetition_penalty: 1.2,
+            temperature: 0.7,
+            top_k: 8,
+            repetition_penalty: 1.15,
             streamer,
         });
         rawBox.textContent = '';
