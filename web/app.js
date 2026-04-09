@@ -49,6 +49,9 @@ function fixCharTypos(text) {
 }
 
 function normalizePunctuation(text) {
+    text = text.replace(/[^\x20-\x7E\n]/g, '');       // strip non-ASCII junk
+    text = text.replace(/[-]{3,}/g, '');                // strip dash runs
+    text = text.replace(/[*=~_]{2,}/g, '');             // strip decoration runs
     text = text.replace(/!{3,}/g, '!!');
     text = text.replace(/\?{3,}/g, '??');
     text = text.replace(/\.{4,}/g, '...');
@@ -266,8 +269,8 @@ async function generate() {
         fullGenerated = await generateRound(basePrompt, 80);
         fullGenerated = trimToSentenceEnd(fullGenerated);
 
-        // Rounds 2-5: trim after each turn, inject next character
-        for (let round = 0; round < 4; round++) {
+        // Rounds 2-4: trim after each turn, inject next character
+        for (let round = 0; round < 3; round++) {
             const lastSpeaker = findLastSpeaker(fullGenerated);
             const nextChar = pickNextChar(lastSpeaker, round);
 
