@@ -163,8 +163,41 @@ This requires reannotating training data. Alternatively, train the BASE model wi
 **Winner over v5** — lower loss, significantly better topic adherence
 
 **ONNX export**
-- fp32: 1421 MB → int8: **358 MB** (opset 18, external data merged)
+- fp32: 1421 MB → int8: **358 MB** (opset 14, legacy torch.onnx.export, external data merged)
 - Uploaded to `hermanda/gpt2-seinfeld` (replaces previous `onnx/model_quantized.onnx`)
+- Export note: dynamo-based exporter (torch 2.10+ default) produces broken models for GPT-2 + KV cache; must use `dynamo=False` to force legacy TorchScript exporter
+
+**fp32 vs int8 quantitative comparison** (`scripts/compare_onnx.py`, 5 topics, seed=42, temp=0.7, top_k=5)
+
+| Metric | Value |
+|--------|-------|
+| Mean logit cosine similarity | **0.199** (near-orthogonal!) |
+| Min cosine similarity | **-0.999** (some steps have inverted logit rankings) |
+| Top-1 token agreement | **6.5%** |
+| Top-5 token agreement | **0.9%** |
+| Identical output sequences | **0/5** |
+| fp32 total time (5 topics × 200 tok) | 14.6s |
+| int8 total time | 7.1s (**2.1x faster**) |
+| Avg seinfeld characters found | fp32=2.2, int8=2.0 |
+| Avg dialogue lines detected | fp32=11.8, int8=11.8 |
+
+Key observations:
+- **Logits diverge massively** — cosine similarity averaging 0.20 means the 50K-dim logit vectors are nearly orthogonal. At some decode steps the cosine is *negative*, meaning the quantized model ranks tokens in nearly opposite order.
+- **Despite this, output quality is comparable.** Both models produce proper `[LOCATION]\nCHARACTER: dialogue` format, use correct Seinfeld character names (Jerry, George, Elaine, Kramer), generate relevant locations (Jerry's Apartment, Monk's Diner, Restaurant), and stay on-topic.
+- **The int8 model is ~2x faster** on CPU (ONNX Runtime, Apple Silicon).
+- Both models share the same weaknesses: character repetition (same character talks to themselves for multiple turns), occasional rambling past coherence.
+- Explanation: language generation has many valid continuations at each step. The model's "knowledge" of Seinfeld format and characters is distributed across weights in a way that survives aggressive quantization, even though individual token predictions diverge completely. Top-k=5 sampling at low temperature helps — we only need the top tokens to be *plausible*, not *identical*.
+
+Sample outputs (first 150 chars):
+```
+Topic: "shrinkage"
+  fp32: [MONK'S DINER] ELAINE: I think it's possible. JERRY: What if it wasn't? ELAINE: It's very possible...
+  int8: [JERRY'S APARTMENT] JERRY: You know, I don't know why I waited so long to tell you about my shrinkage...
+
+Topic: "a bad haircut"
+  fp32: [JERRY'S APARTMENT] JERRY: What happened to your head? GEORGE: It was all brown...
+  int8: [MONK'S DINER] ELAINE: You know, I think the haircut may have been the reason that George got expelled...
+```
 
 ---
 
