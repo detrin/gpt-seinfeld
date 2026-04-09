@@ -49,12 +49,12 @@ function fixCharTypos(text) {
 }
 
 function normalizePunctuation(text) {
-    text = text.replace(/[^\x20-\x7E\n]/g, '');       // strip non-ASCII junk
-    text = text.replace(/[-]{3,}/g, '');                // strip dash runs
-    text = text.replace(/[*=~_]{2,}/g, '');             // strip decoration runs
+    // Only keep letters, digits, standard punctuation, and whitespace
+    text = text.replace(/[^A-Za-z0-9 \n.,!?'":;\-()[\]]/g, '');
     text = text.replace(/!{3,}/g, '!!');
     text = text.replace(/\?{3,}/g, '??');
     text = text.replace(/\.{4,}/g, '...');
+    text = text.replace(/-{3,}/g, '--');
     text = text.replace(/ {2,}/g, ' ');
     text = text.replace(/([.!?,;])([A-Za-z])/g, '$1 $2');
     return text;
