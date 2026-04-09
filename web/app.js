@@ -191,7 +191,11 @@ function parseScene(raw) {
 }
 
 function cleanDialogueText(str) {
-    return str.replace(/[:\[\];()\-]/g, ' ').replace(/ {2,}/g, ' ').trim();
+    str = str.replace(/[:\[\];()\-]/g, ' ').replace(/ {2,}/g, ' ').trim();
+    str = str.replace(/^[^A-Za-z]+/, '');              // strip leading punctuation
+    str = str.replace(/\.{2}(?!\.)/g, '.');            // collapse .. to .
+    if (str) str = str[0].toUpperCase() + str.slice(1); // capitalize first letter
+    return str;
 }
 
 function escapeHtml(str) {
