@@ -205,10 +205,14 @@ function escapeHtml(str) {
 function renderScene(scene) {
     document.getElementById('scene-tag').textContent = scene.tag ?? '';
 
-    if (scene.dialogue.length > 0) {
-        document.getElementById('dialogue').innerHTML = scene.dialogue
+    const lines = scene.dialogue
+        .map(({ char, text }) => ({ char, text: cleanDialogueText(text) }))
+        .filter(({ text }) => text.split(/\s+/).filter(w => w).length >= 3);
+
+    if (lines.length > 0) {
+        document.getElementById('dialogue').innerHTML = lines
             .map(({ char, text }) =>
-                `<div class="line"><span class="char">${char}</span><span class="text">${escapeHtml(cleanDialogueText(text))}</span></div>`
+                `<div class="line"><span class="char">${char}</span><span class="text">${escapeHtml(text)}</span></div>`
             )
             .join('');
     } else {
@@ -235,9 +239,24 @@ function trimToSentenceEnd(text) {
     return m ? m[0] : text;
 }
 
-function pickNextChar(lastSpeaker, roundIndex) {
-    const others = MAIN_CHARS.filter(c => c !== lastSpeaker);
-    return others[roundIndex % others.length];
+function trimToFirstTurn(text) {
+    // Keep location tag + first character's turn only
+    const charPattern = /\b(JERRY|GEORGE|ELAINE|KRAMER)\s*:/g;
+    const matches = [...text.matchAll(charPattern)];
+    if (matches.length >= 2) {
+        // Cut before the second character turn
+        return trimToSentenceEnd(text.slice(0, matches[1].index));
+    }
+    return trimToSentenceEnd(text);
+}
+
+function shuffled(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
 }
 
 async function generateRound(prompt, maxTokens) {
@@ -273,15 +292,16 @@ async function generate() {
     let fullGenerated = '';
 
     try {
-        // Round 1: generate location + first character's turn
+        // Round 1: generate location + first character's turn only
         fullGenerated = await generateRound(basePrompt, 80);
-        fullGenerated = trimToSentenceEnd(fullGenerated);
+        fullGenerated = trimToFirstTurn(fullGenerated);
 
-        // Rounds 2-4: trim after each turn, inject next character
-        for (let round = 0; round < 3; round++) {
-            const lastSpeaker = findLastSpeaker(fullGenerated);
-            const nextChar = pickNextChar(lastSpeaker, round);
+        // Build shuffled list of remaining characters to inject
+        const firstSpeaker = findLastSpeaker(fullGenerated);
+        const others = shuffled(MAIN_CHARS.filter(c => c !== firstSpeaker));
 
+        // Rounds 2-4: inject each remaining character
+        for (const nextChar of others) {
             fullGenerated += `\n\n${nextChar}: `;
             const cont = await generateRound(basePrompt + fullGenerated, 60);
             fullGenerated += trimToSentenceEnd(cont);
