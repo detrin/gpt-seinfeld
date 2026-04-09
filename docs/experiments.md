@@ -124,6 +124,50 @@ This requires reannotating training data. Alternatively, train the BASE model wi
 
 ---
 
+---
+
+## v5 — GPT-2 medium full fine-tune (all params)
+
+**Config**
+- Base model: `gpt2-medium` (345M), all parameters updated (no LoRA)
+- Epochs: 5, lr=5e-5, warmup=100, batch=8, grad_accum=2 (eff. batch=16)
+- Dataset: 2295 examples (`data/processed/train_v2.jsonl` — Haiku-annotated topics)
+- A100 40GB, ~5 min
+
+**Results**
+- Final avg train loss: **1.998**
+- Output quality: generates Seinfeld content, topic partially ignored, prose-like narrative rather than `CHARACTER: text` format
+- Sample (parking tickets): `[STREET] ST. PETERSBURG - DAY — And that's the end of it! I'm finally getting my spaces back...`
+
+---
+
+---
+
+## v6 — GPT-2 medium deep LoRA (r=64, c_attn+c_proj+c_fc) ← current prod
+
+**Config**
+- Base model: `gpt2-medium` (345M)
+- LoRA: r=64, alpha=128, target=`c_attn+c_proj+c_fc` (adds MLP to attention), 6.6% trainable params
+- Epochs: 20, lr=2e-4, warmup=200, batch=8, grad_accum=2 (eff. batch=16)
+- Dataset: 2295 examples (`data/processed/train_v2.jsonl` — Haiku-annotated topics)
+- A100 40GB, ~19 min
+
+**Results**
+- Final avg train loss: **1.766** (still decreasing at epoch 20, loss trajectory 2.49 → 1.45)
+- Output quality: **better topic relevance** than all previous GPT-2 versions — scenes actually reference the user's topic
+  - "losing a parking spot" → scene about someone taking a spot, Kramer and Elaine arguing
+  - "waiting for a table" → Elaine/George at a restaurant, Mr. Costanza ordering appetizers
+  - "a bad haircut" → Jerry/George/Elaine at Monk's, bald guy becoming George
+- Remaining issues: prose-narrative style rather than proper `CHARACTER: text` format
+
+**Winner over v5** — lower loss, significantly better topic adherence
+
+**ONNX export**
+- fp32: 1421 MB → int8: **358 MB** (opset 18, external data merged)
+- Uploaded to `hermanda/gpt2-seinfeld` (replaces previous `onnx/model_quantized.onnx`)
+
+---
+
 ## Agreed next steps (in priority order)
 
 ### 1. Clean training data with Haiku
