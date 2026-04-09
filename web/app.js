@@ -28,13 +28,36 @@ async function loadModel() {
 function parseScene(raw) {
     // The prompt ends with "[" so prepend it back for parsing
     const text = '[' + raw;
-    const scene = { tag: null, dialogue: [] };
+    const scene = { tag: null, dialogue: [], raw: text };
+
+    // Extract location tag: [ANYTHING] at start of text or on its own line
+    const tagMatch = text.match(/^\[([^\]]+)\]/);
+    if (tagMatch) {
+        scene.tag = tagMatch[0];
+    }
+
+    // Try line-by-line parsing first (model sometimes produces proper format)
     for (const line of text.split('\n').map(l => l.trim())) {
         if (!line || line === '[END]') break;
-        if (line.startsWith('[') && line.endsWith(']')) { scene.tag = line; continue; }
+        if (line.startsWith('[') && line.endsWith(']')) {
+            scene.tag = line;
+            continue;
+        }
         const m = line.match(/^([A-Z][A-Z\s]{1,20}):\s*(.+)/);
         if (m) scene.dialogue.push({ char: m[1].trim(), text: m[2] });
     }
+
+    // If no dialogue found, try splitting on character name patterns within the text
+    // (model often produces prose with embedded CHARACTER: patterns)
+    if (scene.dialogue.length === 0) {
+        const rest = tagMatch ? text.slice(tagMatch[0].length) : text;
+        const parts = rest.split(/(?=\b[A-Z][A-Z\s]{1,20}:\s)/);
+        for (const part of parts) {
+            const m = part.match(/^([A-Z][A-Z\s]{1,20}):\s*(.+)/s);
+            if (m) scene.dialogue.push({ char: m[1].trim(), text: m[2].trim() });
+        }
+    }
+
     return scene;
 }
 
@@ -44,11 +67,20 @@ function escapeHtml(str) {
 
 function renderScene(scene) {
     document.getElementById('scene-tag').textContent = scene.tag ?? '';
-    document.getElementById('dialogue').innerHTML = scene.dialogue
-        .map(({ char, text }) =>
-            `<div class="line"><span class="char">${char}</span><span class="text">${escapeHtml(text)}</span></div>`
-        )
-        .join('');
+
+    if (scene.dialogue.length > 0) {
+        document.getElementById('dialogue').innerHTML = scene.dialogue
+            .map(({ char, text }) =>
+                `<div class="line"><span class="char">${char}</span><span class="text">${escapeHtml(text)}</span></div>`
+            )
+            .join('');
+    } else {
+        // Fallback: show raw text when parsing finds no structured dialogue
+        const rawText = scene.tag ? scene.raw.slice(scene.tag.length).trim() : scene.raw;
+        document.getElementById('dialogue').innerHTML =
+            `<div class="line"><span class="text">${escapeHtml(rawText)}</span></div>`;
+    }
+
     document.getElementById('output').classList.remove('hidden');
 }
 
@@ -76,7 +108,7 @@ async function generate() {
         skip_prompt: true,
         callback_function: (token) => {
             generated += token;
-            rawBox.textContent = generated;
+            rawBox.textContent = '[' + generated;
         },
     });
 
@@ -90,6 +122,9 @@ async function generate() {
         });
         rawBox.textContent = '';
         renderScene(parseScene(generated));
+    } catch (err) {
+        console.error('Generation error:', err);
+        rawBox.textContent = `Error: ${err.message}`;
     } finally {
         btn.disabled = false;
         regen.disabled = false;
@@ -102,7 +137,11 @@ document.getElementById('regen-btn').addEventListener('click', generate);
 document.getElementById('copy-btn').addEventListener('click', () => {
     const tag = document.getElementById('scene-tag').textContent;
     const lines = [...document.querySelectorAll('.line')]
-        .map(el => `${el.querySelector('.char').textContent}: ${el.querySelector('.text').textContent}`)
+        .map(el => {
+            const char = el.querySelector('.char');
+            const text = el.querySelector('.text');
+            return char ? `${char.textContent}: ${text.textContent}` : text.textContent;
+        })
         .join('\n');
     navigator.clipboard.writeText(`${tag}\n\n${lines}`);
 });
