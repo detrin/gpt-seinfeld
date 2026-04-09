@@ -24,8 +24,8 @@ print("Model loaded.")
 # Inspect model I/O
 _in_names = [i.name for i in session.get_inputs()]
 _out_names = [o.name for o in session.get_outputs()]
-print("Inputs:", _in_names)
-print("Outputs:", _out_names)
+print("Inputs:", _in_names[:3], "...")
+print("Outputs:", _out_names[:4], "...")
 
 
 N_LAYERS = 24
@@ -33,70 +33,58 @@ N_HEADS = 16
 HEAD_DIM = 64
 
 
-def _sample(logits: np.ndarray, seen: set[int], temperature: float, rep_penalty: float) -> int:
+def _sample(logits: np.ndarray, temperature: float, top_k: int) -> int:
+    """Top-k sampling — more stable than full-vocab sampling for int8 quantized models."""
     logits = logits.astype(np.float64)
-    for tid in seen:
-        logits[tid] = logits[tid] * rep_penalty if logits[tid] < 0 else logits[tid] / rep_penalty
-    logits /= max(temperature, 1e-8)
-    logits -= logits.max()
-    probs = np.exp(logits)
+    top_ids = np.argsort(logits)[-top_k:]
+    top_logits = logits[top_ids]
+    top_logits /= max(temperature, 1e-8)
+    top_logits -= top_logits.max()
+    probs = np.exp(top_logits)
     probs /= probs.sum()
-    return int(np.random.choice(len(probs), p=probs))
+    return int(top_ids[int(np.random.choice(top_k, p=probs))])
 
 
-def generate_tokens(prompt: str, max_new: int, temperature: float, rep_penalty: float) -> list[int]:
-    prompt_ids = enc.encode(prompt)
-    seen = set(prompt_ids)
-    generated: list[int] = []
-
-    # Initial empty KV cache: (1, n_heads, 0, head_dim)
-    empty = np.empty((1, N_HEADS, 0, HEAD_DIM), dtype=np.float32)
-    past = {f"past_key_values.{i}.{kv}": empty for i in range(N_LAYERS) for kv in ("key", "value")}
-
-    # First forward pass: full prompt
-    seq = np.array([prompt_ids], dtype=np.int64)
-    attn = np.ones((1, len(prompt_ids)), dtype=np.int64)
-    pos = np.arange(len(prompt_ids), dtype=np.int64)[None]
-
-    feeds = {"input_ids": seq, "attention_mask": attn, "position_ids": pos, **past}
+def _decode_step(token_id: int, past_len: int, past: dict) -> tuple[np.ndarray, dict]:
+    """Single decode step. attention_mask shape = (1, past_len+1) as the model expects."""
+    feeds = {
+        "input_ids": np.array([[token_id]], dtype=np.int64),
+        "attention_mask": np.ones((1, past_len + 1), dtype=np.int64),
+        "position_ids": np.array([[past_len]], dtype=np.int64),
+        **past,
+    }
     outputs = session.run(None, feeds)
-    logits_all = outputs[0]  # (1, prompt_len, vocab)
-    present = outputs[1:]  # 2*N_LAYERS arrays
-
-    next_id = _sample(logits_all[0, -1], seen, temperature, rep_penalty)
-    generated.append(next_id)
-    seen.add(next_id)
-    past_len = len(prompt_ids)
-
-    # Update past from present
-    past = {
+    present = outputs[1:]
+    new_past = {
         f"past_key_values.{i}.{kv}": present[i * 2 + j]
         for i in range(N_LAYERS)
         for j, kv in enumerate(("key", "value"))
     }
+    return outputs[0][0, -1], new_past  # logits (vocab,), new_past
 
-    for step in range(max_new - 1):
+
+def generate_tokens(prompt: str, max_new: int, temperature: float, top_k: int) -> list[int]:
+    prompt_ids = enc.encode(prompt)
+    generated: list[int] = []
+
+    # Token-by-token prefill (model expects attention_mask of shape (1, past_len+1))
+    empty = np.empty((1, N_HEADS, 0, HEAD_DIM), dtype=np.float32)
+    past = {f"past_key_values.{i}.{kv}": empty for i in range(N_LAYERS) for kv in ("key", "value")}
+    for pos, tok in enumerate(prompt_ids):
+        logits, past = _decode_step(tok, pos, past)
+    past_len = len(prompt_ids)
+
+    # Generate
+    next_id = _sample(logits, temperature, top_k)
+    generated.append(next_id)
+
+    for _ in range(max_new - 1):
         if next_id == EOS_ID:
             break
+        logits, past = _decode_step(next_id, past_len, past)
         past_len += 1
-        seq = np.array([[next_id]], dtype=np.int64)
-        attn = np.ones((1, past_len + 1), dtype=np.int64)
-        pos = np.array([[past_len]], dtype=np.int64)
-
-        feeds = {"input_ids": seq, "attention_mask": attn, "position_ids": pos, **past}
-        outputs = session.run(None, feeds)
-        logits_all = outputs[0]
-        present = outputs[1:]
-
-        next_id = _sample(logits_all[0, -1], seen, temperature, rep_penalty)
+        next_id = _sample(logits, temperature, top_k)
         generated.append(next_id)
-        seen.add(next_id)
-
-        past = {
-            f"past_key_values.{i}.{kv}": present[i * 2 + j]
-            for i in range(N_LAYERS)
-            for j, kv in enumerate(("key", "value"))
-        }
 
     return generated
 
@@ -116,15 +104,14 @@ def parse_scene(text: str) -> str:
     return "\n".join(lines) if lines else "(no parseable dialogue)"
 
 
-def generate(
-    topic: str, max_tokens: int, temperature: float, rep_penalty: float
-) -> tuple[str, str]:
+def generate(topic: str, max_tokens: int, temperature: float, top_k: int) -> tuple[str, str]:
     if not topic.strip():
         return "", ""
-    prompt = f"TOPIC: {topic}\n\n"
-    token_ids = generate_tokens(prompt, int(max_tokens), temperature, rep_penalty)
+    prompt = f"TOPIC: {topic}\n\n["
+    token_ids = generate_tokens(prompt, int(max_tokens), temperature, int(top_k))
     raw = enc.decode(token_ids)
-    return raw, parse_scene(raw)
+    full = "[" + raw  # re-add the '[' we primed with
+    return full, parse_scene(full)
 
 
 with gr.Blocks(title="Seinfeld Scene Generator — Debug") as demo:
@@ -137,8 +124,8 @@ with gr.Blocks(title="Seinfeld Scene Generator — Debug") as demo:
 
     with gr.Row():
         max_tokens = gr.Slider(50, 400, value=200, step=10, label="Max tokens")
-        temperature = gr.Slider(0.1, 2.0, value=0.9, step=0.05, label="Temperature")
-        rep_penalty = gr.Slider(1.0, 2.0, value=1.2, step=0.05, label="Repetition penalty")
+        temperature = gr.Slider(0.1, 2.0, value=0.7, step=0.05, label="Temperature")
+        top_k = gr.Slider(1, 50, value=5, step=1, label="Top-k (1 = greedy)")
 
     btn = gr.Button("Generate", variant="primary")
 
@@ -148,7 +135,7 @@ with gr.Blocks(title="Seinfeld Scene Generator — Debug") as demo:
 
     btn.click(
         generate,
-        inputs=[topic, max_tokens, temperature, rep_penalty],
+        inputs=[topic, max_tokens, temperature, top_k],
         outputs=[raw_out, parsed_out],
     )
 
