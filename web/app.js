@@ -227,6 +227,13 @@ function renderScene(scene) {
 
 const MAIN_CHARS = ['JERRY', 'GEORGE', 'ELAINE', 'KRAMER'];
 
+const LOCATIONS = [
+    "JERRY'S APARTMENT", "MONK'S DINER", "THE STREET",
+    "GEORGE'S APARTMENT", "ELAINE'S APARTMENT", "THE COFFEE SHOP",
+    "YANKEE STADIUM", "THE SUBWAY", "A RESTAURANT",
+    "KRAMER'S APARTMENT", "THE OFFICE", "A TAXI",
+];
+
 const GEN_OPTS = { do_sample: true, temperature: 0.7, top_k: 8, repetition_penalty: 1.15 };
 
 function findLastSpeaker(text) {
@@ -234,20 +241,28 @@ function findLastSpeaker(text) {
     return matches.length > 0 ? matches[matches.length - 1][1] : null;
 }
 
-function trimToSentenceEnd(text) {
+function trimToSentenceEnd(text, minWords = 0) {
+    // Find all sentence-ending positions
+    const endPattern = /[.!?")\]]/g;
+    let match;
+    while ((match = endPattern.exec(text)) !== null) {
+        const candidate = text.slice(0, match.index + 1);
+        const wordCount = candidate.trim().split(/\s+/).filter(w => w).length;
+        if (wordCount >= minWords) return candidate;
+    }
+    // No sentence end found past minWords — return best effort
     const m = text.match(/.*[.!?")\]]/s);
     return m ? m[0] : text;
 }
 
 function trimToFirstTurn(text) {
-    // Keep location tag + first character's turn only
+    // Keep location tag + first character's turn only, always extended
     const charPattern = /\b(JERRY|GEORGE|ELAINE|KRAMER)\s*:/g;
     const matches = [...text.matchAll(charPattern)];
     if (matches.length >= 2) {
-        // Cut before the second character turn
-        return trimToSentenceEnd(text.slice(0, matches[1].index));
+        return trimToSentenceEnd(text.slice(0, matches[1].index), 25);
     }
-    return trimToSentenceEnd(text);
+    return trimToSentenceEnd(text, 25);
 }
 
 function shuffled(arr) {
@@ -288,28 +303,33 @@ async function generate() {
     document.getElementById('dialogue').innerHTML = '';
     document.getElementById('scene-tag').textContent = '';
 
-    const basePrompt = `TOPIC: ${topic}\n\nCHARACTERS: JERRY, GEORGE, ELAINE, KRAMER\n\n[`;
+    const location = LOCATIONS[Math.floor(Math.random() * LOCATIONS.length)];
+    const basePrompt = `TOPIC: ${topic}\n\nCHARACTERS: JERRY, GEORGE, ELAINE, KRAMER\n\n[${location}]\n\n`;
     let fullGenerated = '';
 
     try {
-        // Round 1: generate location + first character's turn only
-        fullGenerated = await generateRound(basePrompt, 80);
+        // Round 1: first character's turn
+        fullGenerated = await generateRound(basePrompt, 100);
         fullGenerated = trimToFirstTurn(fullGenerated);
 
         // Build shuffled list of remaining characters to inject
         const firstSpeaker = findLastSpeaker(fullGenerated);
         const others = shuffled(MAIN_CHARS.filter(c => c !== firstSpeaker));
 
-        // Rounds 2-4: inject each remaining character
+        // Rounds 2-4: inject each remaining character with variable length
         for (const nextChar of others) {
             fullGenerated += `\n\n${nextChar}: `;
-            const cont = await generateRound(basePrompt + fullGenerated, 60);
-            fullGenerated += trimToSentenceEnd(cont);
+            const isExtended = Math.random() < 0.65;
+            const minWords = isExtended ? 25 : 5;
+            const cont = await generateRound(basePrompt + fullGenerated, 100);
+            fullGenerated += trimToSentenceEnd(cont, minWords);
         }
 
         genIndicator.classList.add('hidden');
         const cleaned = postprocess(fullGenerated);
-        renderScene(parseScene(cleaned));
+        const scene = parseScene(cleaned);
+        scene.tag = `[${location}]`;
+        renderScene(scene);
     } catch (err) {
         console.error('Generation error:', err);
         genIndicator.textContent = `Error: ${err.message}`;
