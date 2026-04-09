@@ -212,18 +212,35 @@ function renderScene(scene) {
 
 const MAIN_CHARS = ['JERRY', 'GEORGE', 'ELAINE', 'KRAMER'];
 
-function findSpeakers(text) {
-    const speakers = new Set();
-    for (const name of MAIN_CHARS) {
-        // NAME: dialogue pattern
-        if (new RegExp(`\\b${name}\\s*:`).test(text)) { speakers.add(name); continue; }
-        // NAME at very start (first speaker, no colon)
-        if (new RegExp(`^\\s*${name}\\b`).test(text)) speakers.add(name);
-    }
-    return speakers;
+const GEN_OPTS = { do_sample: true, temperature: 0.7, top_k: 8, repetition_penalty: 1.15 };
+
+function findLastSpeaker(text) {
+    const matches = [...text.matchAll(/\b(JERRY|GEORGE|ELAINE|KRAMER)\s*:/g)];
+    return matches.length > 0 ? matches[matches.length - 1][1] : null;
 }
 
-const GEN_OPTS = { do_sample: true, temperature: 0.7, top_k: 8, repetition_penalty: 1.15 };
+function trimToSentenceEnd(text) {
+    const m = text.match(/.*[.!?")\]]/s);
+    return m ? m[0] : text;
+}
+
+function pickNextChar(lastSpeaker, roundIndex) {
+    const others = MAIN_CHARS.filter(c => c !== lastSpeaker);
+    return others[roundIndex % others.length];
+}
+
+async function generateRound(prompt, maxTokens) {
+    let text = '';
+    await generator(prompt, {
+        max_new_tokens: maxTokens,
+        ...GEN_OPTS,
+        streamer: new TextStreamer(generator.tokenizer, {
+            skip_prompt: true,
+            callback_function: (token) => { text += token; },
+        }),
+    });
+    return text;
+}
 
 async function generate() {
     const topic = document.getElementById('topic-input').value.trim();
@@ -245,35 +262,18 @@ async function generate() {
     let fullGenerated = '';
 
     try {
-        // Round 1: initial generation
-        let roundText = '';
-        await generator(basePrompt, {
-            max_new_tokens: 180,
-            ...GEN_OPTS,
-            streamer: new TextStreamer(generator.tokenizer, {
-                skip_prompt: true,
-                callback_function: (token) => { roundText += token; },
-            }),
-        });
-        fullGenerated = roundText;
+        // Round 1: generate location + first character's turn
+        fullGenerated = await generateRound(basePrompt, 80);
+        fullGenerated = trimToSentenceEnd(fullGenerated);
 
-        // Up to 2 continuation rounds if only 1 character spoke
-        for (let round = 0; round < 2; round++) {
-            const speakers = findSpeakers(fullGenerated);
-            const nextChar = MAIN_CHARS.find(c => !speakers.has(c));
-            if (!nextChar || speakers.size >= 3) break;
+        // Rounds 2-5: trim after each turn, inject next character
+        for (let round = 0; round < 4; round++) {
+            const lastSpeaker = findLastSpeaker(fullGenerated);
+            const nextChar = pickNextChar(lastSpeaker, round);
 
             fullGenerated += `\n\n${nextChar}: `;
-            let contText = '';
-            await generator(basePrompt + fullGenerated, {
-                max_new_tokens: 80,
-                ...GEN_OPTS,
-                streamer: new TextStreamer(generator.tokenizer, {
-                    skip_prompt: true,
-                    callback_function: (token) => { contText += token; },
-                }),
-            });
-            fullGenerated += contText;
+            const cont = await generateRound(basePrompt + fullGenerated, 60);
+            fullGenerated += trimToSentenceEnd(cont);
         }
 
         genIndicator.classList.add('hidden');
