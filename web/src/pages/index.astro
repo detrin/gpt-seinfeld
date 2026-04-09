@@ -1,0 +1,418 @@
+---
+import '../styles/global.css';
+---
+
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seinfeld Scene Generator — AI dialogue in your browser</title>
+  <meta name="description" content="Generate Seinfeld scenes entirely in your browser using fine-tuned LLMs. No server, no API keys." />
+</head>
+<body>
+  <div class="topbar">
+    <span class="logo">seinfeld.ai</span>
+    <a class="site-name" href="/">Scene Generator</a>
+    <div class="nav">
+      <a href="#how-it-works">how it works</a>
+      <a href="#pipeline">pipeline</a>
+      <a href="#libraries">libraries</a>
+      <a href="https://github.com/detrin/gpt-seinfeld">github</a>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Generator -->
+    <div class="card">
+      <div class="card-title">Generate a Seinfeld scene</div>
+      <div class="card-subtitle" id="typing-subtitle"></div>
+
+      <div class="model-selector">
+        <span class="label">MODEL</span>
+        <div class="model-toggle">
+          <input type="radio" id="model-llama" name="model" value="llama" checked />
+          <label for="model-llama">Llama 3.2 3B</label>
+          <input type="radio" id="model-gpt2" name="model" value="gpt2" />
+          <label for="model-gpt2">GPT-2 Medium</label>
+        </div>
+        <div class="model-info" id="model-info">~1.9 GB download &middot; better quality &middot; 1-4 min generation</div>
+      </div>
+
+      <div id="model-status" class="hidden">
+        <span id="status-text">Loading model&hellip;</span>
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+      </div>
+
+      <div>
+        <span class="label">TOPIC / SITUATION</span>
+        <input type="text" id="topic-input" placeholder="e.g. losing a parking spot, double dipping, a close talker" />
+      </div>
+
+      <div class="settings-row">
+        <div class="setting">
+          <span class="label">TOKENS PER TURN</span>
+          <input type="number" id="tokens-input" value="150" min="50" max="500" step="10" />
+          <span class="setting-hint">50&ndash;500</span>
+          <span class="setting-error hidden" id="tokens-error"></span>
+        </div>
+        <div class="setting">
+          <span class="label">MIN WORDS PER TURN</span>
+          <input type="number" id="minwords-input" value="20" min="3" max="100" step="1" />
+          <span class="setting-hint">3&ndash;100</span>
+          <span class="setting-error hidden" id="minwords-error"></span>
+        </div>
+      </div>
+
+      <button id="generate-btn" disabled>generate scene</button>
+
+      <div id="output" class="hidden">
+        <div class="output-label">GENERATED SCENE</div>
+        <div id="generating" class="hidden">Writing scene</div>
+        <pre id="stream-raw" class="hidden"></pre>
+        <div id="scene-tag"></div>
+        <div id="dialogue"></div>
+        <div class="actions">
+          <button id="regen-btn">regenerate</button>
+          <button id="copy-btn">copy</button>
+          <button id="share-btn">share</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- How it works -->
+    <div class="section reveal" id="how-it-works">
+      <div class="section-title">How it works</div>
+      <p>
+        Two language models were fine-tuned on ~<span class="stat" data-count="2300">0</span> Seinfeld script excerpts to learn
+        the show's dialogue style, character voices, and scene structure. Both models
+        run <strong>entirely in your browser</strong> using WebAssembly &mdash; no server,
+        no API keys, no data leaves your machine.
+      </p>
+      <p>
+        <strong>Llama 3.2 3B</strong> was trained with <strong>QLoRA</strong> (quantized
+        low-rank adaptation) &mdash; only <span class="stat" data-count="1.6" data-suffix="%">0</span> of the model's parameters were updated,
+        but that was enough to teach it Seinfeld's format and tone. The model is served as
+        a 4-bit GGUF file (~<span class="stat" data-count="1.9" data-suffix=" GB">0</span>, sharded into 4 chunks for browser memory limits) and
+        executed via WebAssembly with optional multi-threading.
+      </p>
+      <p>
+        <strong>GPT-2 Medium</strong> (<span class="stat" data-count="345" data-suffix="M">0</span> params) was fine-tuned with a deeper LoRA
+        configuration targeting both attention and MLP layers (r=64, <span class="stat" data-count="6.6" data-suffix="%">0</span> trainable params).
+        It's served as an int8 ONNX model (~<span class="stat" data-count="358" data-suffix=" MB">0</span>) and runs through the ONNX Runtime
+        WebAssembly backend.
+      </p>
+    </div>
+
+    <!-- Pipeline visualization -->
+    <div class="section reveal" id="pipeline">
+      <div class="section-title">Generation pipeline</div>
+      <p>When you click "generate", here's what happens under the hood:</p>
+
+      <div class="pipeline" id="pipeline-viz">
+        <div class="pipeline-step" data-step="0">
+          <div class="pipeline-icon">T</div>
+          <div class="pipeline-label">Topic</div>
+          <div class="pipeline-detail">your input text</div>
+        </div>
+        <div class="pipeline-arrow">&#x2192;</div>
+        <div class="pipeline-step" data-step="1">
+          <div class="pipeline-icon">P</div>
+          <div class="pipeline-label">Prompt</div>
+          <div class="pipeline-detail">TOPIC + CHARS + [LOCATION]</div>
+        </div>
+        <div class="pipeline-arrow">&#x2192;</div>
+        <div class="pipeline-step" data-step="2">
+          <div class="pipeline-icon">&theta;</div>
+          <div class="pipeline-label">Model</div>
+          <div class="pipeline-detail">LoRA weights via WASM</div>
+        </div>
+        <div class="pipeline-arrow">&#x2192;</div>
+        <div class="pipeline-step" data-step="3">
+          <div class="pipeline-icon">R</div>
+          <div class="pipeline-label">Raw tokens</div>
+          <div class="pipeline-detail">multi-round generation</div>
+        </div>
+        <div class="pipeline-arrow">&#x2192;</div>
+        <div class="pipeline-step" data-step="4">
+          <div class="pipeline-icon">F</div>
+          <div class="pipeline-label">Filter</div>
+          <div class="pipeline-detail">6-stage post-process</div>
+        </div>
+        <div class="pipeline-arrow">&#x2192;</div>
+        <div class="pipeline-step" data-step="5">
+          <div class="pipeline-icon">S</div>
+          <div class="pipeline-label">Scene</div>
+          <div class="pipeline-detail">parsed dialogue</div>
+        </div>
+      </div>
+
+      <p>
+        The Llama backend uses <strong>multi-round generation</strong>: it generates the first
+        character's turn, then injects the next character's name into the prompt and generates
+        again, repeating 4 times to ensure all main characters speak. Each round uses
+        top-k sampling (k=8, temp=0.7) with a repetition penalty.
+      </p>
+
+      <pre class="code-block"><span class="comment">// Prompt format (Llama 3B)</span>
+<span class="str">TOPIC: losing a parking spot</span>
+
+<span class="str">CHARACTERS: JERRY, GEORGE, ELAINE, KRAMER</span>
+
+<span class="str">[JERRY'S APARTMENT]</span>
+
+<span class="comment">// Round 1: model generates first character's turn freely</span>
+<span class="comment">// Round 2-4: inject "GEORGE: ", "ELAINE: ", "KRAMER: "</span>
+<span class="comment">//   → forces each character to speak</span></pre>
+    </div>
+
+    <!-- Post-processing -->
+    <div class="section reveal" id="filtering">
+      <div class="section-title">JS-side filtering</div>
+      <p>
+        Raw model output is noisy &mdash; small models hallucinate character names, repeat
+        phrases, and ramble past natural endpoints. A 6-stage post-processing pipeline
+        cleans this up entirely in JavaScript before rendering:
+      </p>
+      <ul class="filter-list">
+        <li>
+          <strong>1. Character typo correction</strong>
+          <span>&mdash; fixes common hallucinations: JERREY&rarr;JERRY, GEROGE&rarr;GEORGE, KRAMRE&rarr;KRAMER (15 known patterns)</span>
+        </li>
+        <li>
+          <strong>2. Punctuation normalization</strong>
+          <span>&mdash; collapses !!!!! to !!, strips stray brackets, ensures spaces after periods</span>
+        </li>
+        <li>
+          <strong>3. Repetition removal</strong>
+          <span>&mdash; deduplicates repeated sentences and detects looping n-gram patterns</span>
+        </li>
+        <li>
+          <strong>4. Monologue capping</strong>
+          <span>&mdash; trims any single character turn to 80 words max, cutting at sentence boundary</span>
+        </li>
+        <li>
+          <strong>5. Trailing trim</strong>
+          <span>&mdash; cuts off incomplete sentences at the end of generation</span>
+        </li>
+        <li>
+          <strong>6. Scene parsing</strong>
+          <span>&mdash; extracts [LOCATION] tags and CHARACTER: text pairs from both line-by-line and inline formats</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Fine-tuning details -->
+    <div class="section reveal" id="finetuning">
+      <div class="section-title">LoRA fine-tuning</div>
+      <p>
+        Both models were trained on the same dataset of 2,295 Seinfeld script excerpts, formatted as:
+      </p>
+      <pre class="code-block"><span class="str">TOPIC: Jerry finds out his new girlfriend is a close talker</span>
+
+<span class="str">[JERRY'S APARTMENT]</span>
+
+<span class="str">JERRY: So I'm standing there, and she's like six inches from my face.</span>
+<span class="str">GEORGE: Six inches? That's nothing. I had a woman once...</span>
+<span class="str">...</span>
+<span class="str">[END]</span></pre>
+      <p>
+        <strong>LoRA</strong> (Low-Rank Adaptation) freezes the original model weights and
+        inserts small trainable matrices into the attention layers. This means we only update
+        ~1-7% of the parameters, which is enough to teach the model the Seinfeld format
+        and character voices while keeping its general language ability intact.
+      </p>
+      <p>
+        The Llama model used <strong>QLoRA</strong> (4-bit quantized base + LoRA adapters)
+        with r=32 and alpha=64, trained for 5 epochs on a single A100 GPU in ~25 minutes.
+        GPT-2 used a deeper LoRA with r=64 targeting both attention and MLP layers, trained
+        for 20 epochs in ~19 minutes.
+      </p>
+      <p class="muted">
+        We tried Qwen2.5-7B (both base and instruct) but the base model's code/math priors
+        were too strong, and the instruct model's RLHF training fought our plain-text format.
+        Smaller models with weaker priors turned out to be easier to steer.
+      </p>
+    </div>
+
+    <!-- Libraries -->
+    <div class="section reveal" id="libraries">
+      <div class="section-title">Libraries</div>
+      <div class="lib-grid">
+        <div class="lib-card">
+          <div class="lib-name"><a href="https://github.com/ngxson/wllama">wllama</a></div>
+          <div class="lib-desc">
+            WebAssembly port of llama.cpp. Loads GGUF models, runs inference
+            with optional multi-threading via SharedArrayBuffer.
+            Powers the Llama 3.2 3B backend.
+          </div>
+          <span class="lib-tag">WASM</span>
+          <span class="lib-tag">GGUF</span>
+        </div>
+        <div class="lib-card">
+          <div class="lib-name"><a href="https://github.com/huggingface/transformers.js">Transformers.js</a></div>
+          <div class="lib-desc">
+            Hugging Face's JS port of the Transformers library.
+            Runs ONNX models via ONNX Runtime Web (WASM backend).
+            Powers the GPT-2 Medium backend.
+          </div>
+          <span class="lib-tag">ONNX</span>
+          <span class="lib-tag">WASM</span>
+        </div>
+        <div class="lib-card">
+          <div class="lib-name"><a href="https://github.com/withastro/astro">Astro</a></div>
+          <div class="lib-desc">
+            Static site generator. Zero JS by default &mdash; only our
+            inline module scripts ship to the browser. Built and deployed to Vercel.
+          </div>
+          <span class="lib-tag">SSG</span>
+        </div>
+        <div class="lib-card">
+          <div class="lib-name"><a href="https://github.com/huggingface/peft">PEFT</a> + <a href="https://github.com/bitsandbytes-foundation/bitsandbytes">bitsandbytes</a></div>
+          <div class="lib-desc">
+            Hugging Face's parameter-efficient fine-tuning library.
+            Used with bitsandbytes for 4-bit QLoRA training on a single A100 GPU.
+          </div>
+          <span class="lib-tag">TRAINING</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <a href="https://github.com/detrin/gpt-seinfeld">source</a> &middot;
+      models on <a href="https://huggingface.co/hermanda">huggingface</a> &middot;
+      made by <a href="https://github.com/detrin">daniel herman</a>
+      <div class="disclaimer">
+        This is a fan project made out of love for the show.
+        Not affiliated with or endorsed by the creators of Seinfeld, Castle Rock Entertainment, or Sony Pictures Television.
+      </div>
+    </div>
+  </div>
+
+  <script type="module" is:inline src="/scripts/app.js"></script>
+  <script is:inline>
+    // 1. Typing subtitle effect
+    (function() {
+      const el = document.getElementById('typing-subtitle');
+      if (!el) return;
+      const phrases = [
+        'Pick a model, type a topic, get a scene.',
+        'Everything runs in your browser.',
+        'No server. No API keys. No data leaves your machine.',
+        'Fine-tuned on 2,300 Seinfeld scripts.',
+        'Two models. One button. Infinite scenes.',
+      ];
+      let phraseIdx = 0, charIdx = 0, deleting = false;
+      const cursor = document.createElement('span');
+      cursor.className = 'typing-cursor';
+      el.appendChild(cursor);
+
+      function tick() {
+        const phrase = phrases[phraseIdx];
+        if (!deleting) {
+          charIdx++;
+          el.textContent = phrase.slice(0, charIdx);
+          el.appendChild(cursor);
+          if (charIdx === phrase.length) {
+            deleting = true;
+            setTimeout(tick, 2200);
+            return;
+          }
+          setTimeout(tick, 45 + Math.random() * 35);
+        } else {
+          charIdx--;
+          el.textContent = phrase.slice(0, charIdx);
+          el.appendChild(cursor);
+          if (charIdx === 0) {
+            deleting = false;
+            phraseIdx = (phraseIdx + 1) % phrases.length;
+            setTimeout(tick, 400);
+            return;
+          }
+          setTimeout(tick, 25);
+        }
+      }
+      tick();
+    })();
+
+    // 2. Scroll reveal for sections
+    const revealObs = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          revealObs.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15 });
+    document.querySelectorAll('.reveal').forEach(el => revealObs.observe(el));
+
+    // 3. Pipeline animation on scroll
+    const pipelineObs = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        const steps = entry.target.querySelectorAll('.pipeline-step');
+        const arrows = entry.target.querySelectorAll('.pipeline-arrow');
+        steps.forEach((step, i) => {
+          setTimeout(() => {
+            step.classList.add('active');
+            if (arrows[i]) arrows[i].classList.add('active');
+          }, i * 300);
+        });
+        pipelineObs.unobserve(entry.target);
+      });
+    }, { threshold: 0.3 });
+    const pipelineEl = document.getElementById('pipeline-viz');
+    if (pipelineEl) pipelineObs.observe(pipelineEl);
+
+    // 4. Filter list stagger animation
+    const filterObs = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        const items = entry.target.querySelectorAll('li');
+        items.forEach((li, i) => {
+          setTimeout(() => li.classList.add('visible'), i * 120);
+        });
+        filterObs.unobserve(entry.target);
+      });
+    }, { threshold: 0.2 });
+    document.querySelectorAll('.filter-list').forEach(el => filterObs.observe(el));
+
+    // 5. Library card stagger on scroll
+    const libObs = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        const cards = entry.target.querySelectorAll('.lib-card');
+        cards.forEach((card, i) => {
+          setTimeout(() => card.classList.add('visible'), i * 150);
+        });
+        libObs.unobserve(entry.target);
+      });
+    }, { threshold: 0.2 });
+    document.querySelectorAll('.lib-grid').forEach(el => libObs.observe(el));
+
+    // 6. Stats counter animation
+    const statObs = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        const el = entry.target;
+        const target = parseFloat(el.dataset.count);
+        const suffix = el.dataset.suffix || '';
+        const isFloat = String(target).includes('.');
+        const decimals = isFloat ? String(target).split('.')[1].length : 0;
+        const duration = 1200;
+        const start = performance.now();
+
+        function step(now) {
+          const t = Math.min((now - start) / duration, 1);
+          const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+          const val = eased * target;
+          el.textContent = (isFloat ? val.toFixed(decimals) : Math.round(val).toLocaleString()) + suffix;
+          if (t < 1) requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+        statObs.unobserve(el);
+      });
+    }, { threshold: 0.5 });
+    document.querySelectorAll('.stat[data-count]').forEach(el => statObs.observe(el));
+  </script>
+</body>
+</html>

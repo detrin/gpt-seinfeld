@@ -9,4 +9,8 @@ model/gpt2-seinfeld/*
 !model/gpt2-seinfeld/.gitkeep
 web/model/*
 !web/model/.gitkeep
+web/node_modules/
+web/dist/
+web/.astro/
+web/.vercel/
 .superpowers/
