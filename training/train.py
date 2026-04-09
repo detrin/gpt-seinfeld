@@ -108,6 +108,27 @@ _CONFIGS: dict[str, dict] = {
         use_qlora=True,
         dtype=torch.bfloat16,
     ),
+    "meta-llama/Llama-3.2-3B": dict(
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        r=32,
+        lora_alpha=64,
+        epochs=5,
+        batch_size=4,
+        grad_accum=4,  # effective batch = 16
+        lr=2e-4,
+        warmup=100,
+        max_length=512,
+        use_qlora=True,
+        dtype=torch.bfloat16,
+    ),
     "meta-llama/Meta-Llama-3.1-8B": dict(
         target_modules=[
             "q_proj",
