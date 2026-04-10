@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import Analytics from '@vercel/analytics/astro';
 ---
 
 <html lang="en">
@@ -288,10 +289,7 @@ import '../styles/global.css';
     </div>
   </div>
 
-  <script>
-    import { inject } from '@vercel/analytics';
-    inject();
-  </script>
+  <Analytics />
 
   <script type="module" is:inline src="/scripts/app.js"></script>
   <script is:inline>
