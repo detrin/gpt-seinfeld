@@ -180,5 +180,8 @@ for (const radio of document.querySelectorAll('input[name="model"]')) {
     radio.addEventListener('change', (e) => switchModel(e.target.value));
 }
 
-// Auto-load default model
-switchModel('llama');
+// Auto-load: default to GPT-2 on mobile (Llama's 1.9 GB exceeds mobile memory limits)
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const defaultModel = isMobile ? 'gpt2' : 'llama';
+document.getElementById(`model-${defaultModel}`).checked = true;
+switchModel(defaultModel);

@@ -30,7 +30,7 @@ import '../styles/global.css';
       <div class="model-selector">
         <span class="label">MODEL</span>
         <div class="model-toggle">
-          <input type="radio" id="model-llama" name="model" value="llama" checked />
+          <input type="radio" id="model-llama" name="model" value="llama" />
           <label for="model-llama">Llama 3.2 3B</label>
           <input type="radio" id="model-gpt2" name="model" value="gpt2" />
           <label for="model-gpt2">GPT-2 Medium</label>
@@ -287,6 +287,11 @@ import '../styles/global.css';
       </div>
     </div>
   </div>
+
+  <script>
+    import { inject } from '@vercel/analytics';
+    inject();
+  </script>
 
   <script type="module" is:inline src="/scripts/app.js"></script>
   <script is:inline>
